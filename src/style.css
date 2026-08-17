@@ -235,6 +235,50 @@ button, a { -webkit-tap-highlight-color: transparent; }
   font: 400 9px/1 var(--mono);
 }
 
+.mode-control {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font: 400 9px/1 var(--mono);
+}
+
+.mode-control > div { display: flex; }
+.mode-control button {
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--dim);
+  font: 400 9px/1 var(--mono);
+  cursor: pointer;
+}
+.mode-control button + button { border-left: 0; }
+.mode-control button.active { border-color: var(--white); background: var(--white); color: var(--black); }
+.mode-control button:disabled { cursor: not-allowed; opacity: .55; }
+
+.phrase-bank {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-top: 1px solid var(--line);
+}
+.phrase-bank[hidden] { display: none; }
+.phrase-bank span {
+  min-width: 0;
+  padding: 9px 12px;
+  overflow: hidden;
+  border-right: 1px solid #1c1c1c;
+  border-bottom: 1px solid #1c1c1c;
+  color: #aaa;
+  font: 400 9px/1 var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.phrase-bank span:nth-child(even) { border-right: 0; }
+
 .record-button {
   height: 58px;
   margin: 14px;

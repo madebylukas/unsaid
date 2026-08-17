@@ -18,6 +18,7 @@ from pathlib import Path
 import torch
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,6 +42,7 @@ app.add_middleware(
 
 pipeline = None
 pipeline_lock = threading.Lock()
+inference_lock = threading.Lock()
 loading = False
 load_error: str | None = None
 
@@ -140,6 +142,13 @@ def decode_nbest(engine, filename: str, limit: int = 5):
     return rows
 
 
+def run_decode(filename: str):
+    # ESPnet keeps mutable decoder state. Serial inference is deliberate.
+    with inference_lock:
+        engine = load_pipeline()
+        return decode_nbest(engine, filename)
+
+
 @app.get("/health")
 def health():
     if not assets_exist():
@@ -177,8 +186,7 @@ async def infer(video: UploadFile = File(...)):
     try:
         temporary.write(payload)
         temporary.close()
-        engine = load_pipeline()
-        candidates = decode_nbest(engine, temporary.name)
+        candidates = await run_in_threadpool(run_decode, temporary.name)
         if not candidates:
             raise HTTPException(status_code=422, detail="the model could not decode visible speech")
         return {

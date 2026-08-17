@@ -43,6 +43,17 @@ npm run dev
 
 Open [http://127.0.0.1:5173](http://127.0.0.1:5173), enable the camera, mouth a short phrase, and stop. The first read is slower because the model loads lazily.
 
+The interface starts in a constrained six-phrase demo mode:
+
+- `it's pretty cool you know`
+- `hello how are you`
+- `thank you very much`
+- `i don't know`
+- `open github`
+- `send the message`
+
+Mouth one line exactly. The raw visual beam is matched against this set and commits only when its match and separation clear the threshold; otherwise it says `not confident`. Switch to `open` in the interface for unrestricted decoding.
+
 CPU is the reliable default because ESPnet's legacy beam search still mixes CPU tensors into MPS decoding. You can experiment with MPS, but it is not yet the honest default:
 
 ```bash

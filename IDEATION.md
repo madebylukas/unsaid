@@ -92,6 +92,7 @@ Use three interaction states:
 - Open-vocabulary Auto-AVSR visual checkpoint
 - Local mouth-crop inference from short webcam clips
 - N-best beam candidates with a separately trained local language model
+- Six-phrase constrained demo decoder with explicit match scores and abstention
 - Measured capture quality and explicit failure states
 - Goal: test whether intended words survive in the lattice on ordinary Mac webcams
 

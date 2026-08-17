@@ -3,6 +3,7 @@ import type { NormalizedLandmark } from "@mediapipe/tasks-vision";
 import "./style.css";
 import { getEngineHealth, inferVideo } from "./api";
 import type { Candidate, EngineHealth, InferenceResult } from "./api";
+import { DEMO_PHRASES, resolveDemo } from "./demo";
 import { MOUTH_CONTOURS } from "./features";
 import { computeQuality, formatResolution } from "./telemetry";
 
@@ -53,12 +54,24 @@ app.innerHTML = `
         </div>
 
         <div class="transcript-wrap">
-          <p class="transcript" id="transcript">mouth a sentence.</p>
-          <p class="notice" id="notice">face the camera and speak silently at a natural pace.</p>
+          <p class="transcript" id="transcript">choose a phrase.</p>
+          <p class="notice" id="notice">start the local engine, then mouth one line from the demo set.</p>
         </div>
 
         <div class="result-meta" id="result-meta">
-          <span>visual only</span><span>no result yet</span>
+          <span id="result-mode">demo / 6 phrases</span><span>no result yet</span>
+        </div>
+
+        <div class="mode-control">
+          <span>decode mode</span>
+          <div>
+            <button class="active" data-mode="demo">demo / 6</button>
+            <button data-mode="open">open</button>
+          </div>
+        </div>
+
+        <div class="phrase-bank" id="phrase-bank">
+          ${DEMO_PHRASES.map((phrase) => `<span>${phrase}</span>`).join("")}
         </div>
 
         <button class="record-button" id="record-button" disabled>
@@ -67,7 +80,7 @@ app.innerHTML = `
         </button>
 
         <section class="candidates-section">
-          <div class="section-head"><span>alternatives</span><span>beam score</span></div>
+          <div class="section-head"><span id="candidate-label">demo matches</span><span id="score-label">match</span></div>
           <div class="candidates" id="candidates">
             <p>the model keeps several readings when the image is ambiguous.</p>
           </div>
@@ -116,6 +129,10 @@ let recorder: MediaRecorder | null = null;
 let recordedChunks: Blob[] = [];
 let discardRecording = false;
 let inferenceBusy = false;
+let inferenceStatusTimer = 0;
+let decodeMode: "demo" | "open" = "demo";
+let lastResult: InferenceResult | null = null;
+let lastDuration = 0;
 let recordingStarted = 0;
 let recordingTimer = 0;
 let lastVideoTime = -1;
@@ -132,6 +149,39 @@ function setNotice(message: string, isError = false): void {
   const notice = $("#notice");
   notice.textContent = message;
   notice.classList.toggle("error", isError);
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"]/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+  })[character] ?? character);
+}
+
+function renderMode(): void {
+  document.querySelectorAll<HTMLButtonElement>("[data-mode]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.mode === decodeMode);
+  });
+  $("#phrase-bank").hidden = decodeMode === "open";
+  $("#candidate-label").textContent = decodeMode === "demo" ? "demo matches" : "visual alternatives";
+  $("#score-label").textContent = decodeMode === "demo" ? "match" : "beam share";
+  $("#result-mode").textContent = decodeMode === "demo" ? "demo / 6 phrases" : "open vocabulary";
+
+  if (lastResult) {
+    renderInferenceResult(lastResult, lastDuration);
+    return;
+  }
+  $("#transcript").textContent = decodeMode === "demo" ? "choose a phrase." : "mouth a sentence.";
+  $("#candidates").innerHTML = `<p>${decodeMode === "demo"
+    ? "the model may commit only to one of the six phrases above."
+    : "the model keeps several readings when the image is ambiguous."}</p>`;
+  if (engine) {
+    setNotice(decodeMode === "demo"
+      ? "mouth one demo phrase exactly, then stop."
+      : "face the camera and speak silently at a natural pace.");
+  }
 }
 
 function resizeOverlay(): void {
@@ -282,6 +332,9 @@ async function enableCamera(): Promise<void> {
     $("#camera-name").textContent = track.label || "webcam";
     $("#camera-spec").textContent = `${formatResolution(settings.width ?? video.videoWidth, settings.height ?? video.videoHeight)} · ${Math.round(settings.frameRate ?? 0)} fps · video only`;
     $("#camera-state").textContent = "searching for face";
+    setNotice(decodeMode === "demo"
+      ? "mouth one demo phrase exactly, then stop."
+      : "mouth a sentence at a natural pace, then stop.");
     updateRecordAvailability();
   } catch (error) {
     button.disabled = false;
@@ -302,6 +355,9 @@ function updateRecordAvailability(): void {
   const quality = computeQuality({ mouthWidthPx, fps: measuredFps, luminance, rollDegrees, faceVisible });
   const recording = recorder?.state === "recording";
   button.disabled = !recording && (inferenceBusy || !stream || !engine || engine.status === "setup_required" || quality.score < 50);
+  document.querySelectorAll<HTMLButtonElement>("[data-mode]").forEach((modeButton) => {
+    modeButton.disabled = inferenceBusy || recording;
+  });
 }
 
 function renderClock(): void {
@@ -333,7 +389,7 @@ function startRecording(): void {
   $("#record-action").textContent = "stop + read";
   $("#inference-state").textContent = "recording";
   $("#transcript").textContent = "…";
-  setNotice("mouth a complete phrase, then stop.");
+  setNotice(decodeMode === "demo" ? "mouth one demo phrase exactly, then stop." : "mouth a complete phrase, then stop.");
   renderClock();
 }
 
@@ -355,11 +411,33 @@ function renderCandidates(candidates: Candidate[]): void {
   container.innerHTML = candidates.map((candidate, index) => `
     <div class="candidate-row">
       <span>${String(index + 1).padStart(2, "0")}</span>
-      <strong>${candidate.text}</strong>
+      <strong>${escapeHtml(candidate.text)}</strong>
       <div class="score"><i style="width:${Math.max(2, candidate.probability * 100).toFixed(1)}%"></i></div>
       <b>${Math.round(candidate.probability * 100)}%</b>
     </div>
   `).join("");
+}
+
+function renderInferenceResult(result: InferenceResult, duration: number): void {
+  if (decodeMode === "demo") {
+    const resolution = resolveDemo(result.candidates);
+    renderCandidates(resolution.candidates);
+    if (resolution.committed) {
+      $("#transcript").textContent = resolution.candidates[0].text;
+      $("#inference-state").textContent = `${Math.round(resolution.confidence * 100)}% match`;
+      setNotice(`raw visual reading: “${result.transcript}”. constrained to the demo set.`);
+    } else {
+      $("#transcript").textContent = "not confident.";
+      $("#inference-state").textContent = "abstained";
+      setNotice(`raw visual reading: “${result.transcript}”. try one demo phrase more slowly.`, true);
+    }
+  } else {
+    $("#transcript").textContent = result.transcript || "no reading";
+    $("#inference-state").textContent = "complete";
+    renderCandidates(result.candidates);
+    setNotice("visual-only result. alternatives remain visible below.");
+  }
+  $("#result-meta").innerHTML = `<span id="result-mode">${decodeMode === "demo" ? "demo / 6 phrases" : "open vocabulary"}</span><span>${duration.toFixed(1)} s clip · ${(result.latency_ms / 1000).toFixed(1)} s read · ${escapeHtml(result.device)}</span>`;
 }
 
 async function submitRecording(): Promise<void> {
@@ -379,18 +457,24 @@ async function submitRecording(): Promise<void> {
   const blob = new Blob(recordedChunks, { type: recorder?.mimeType || "video/webm" });
   inferenceBusy = true;
   updateRecordAvailability();
+  const inferenceStarted = performance.now();
+  $("#inference-state").textContent = "reading 0s";
+  setNotice("reading locally. the first clip can take 10–20 seconds.");
+  inferenceStatusTimer = window.setInterval(() => {
+    const seconds = Math.floor((performance.now() - inferenceStarted) / 1000);
+    $("#inference-state").textContent = `reading ${seconds}s`;
+  }, 1000);
   try {
     const result: InferenceResult = await inferVideo(blob);
-    $("#transcript").textContent = result.transcript || "no reading";
-    $("#inference-state").textContent = "complete";
-    $("#result-meta").innerHTML = `<span>${duration.toFixed(1)} s clip</span><span>${(result.latency_ms / 1000).toFixed(1)} s inference · ${result.device}</span>`;
-    renderCandidates(result.candidates);
-    setNotice("visual-only result. alternatives remain visible below.");
+    lastResult = result;
+    lastDuration = duration;
+    renderInferenceResult(result, duration);
   } catch (error) {
     $("#transcript").textContent = "model error.";
     $("#inference-state").textContent = "failed";
     setNotice(error instanceof Error ? error.message : "inference failed", true);
   } finally {
+    window.clearInterval(inferenceStatusTimer);
     inferenceBusy = false;
     updateRecordAvailability();
   }
@@ -402,28 +486,62 @@ function toggleRecording(): void {
 }
 
 async function pollEngine(): Promise<void> {
-  engine = await getEngineHealth();
+  const nextEngine = await getEngineHealth();
   const state = $("#engine-state");
   const detail = $("#engine-detail");
   const command = $("#engine-command");
+  if (!nextEngine && inferenceBusy && engine) {
+    state.textContent = "decoding";
+    detail.textContent = `${engine.engine} · ${engine.device} · request in progress`;
+    return;
+  }
+  engine = nextEngine;
   if (!engine) {
     state.textContent = "offline";
     detail.textContent = "localhost:8787 is not running";
     command.textContent = "npm run vsr";
+    if (!inferenceBusy) {
+      $("#record-action").textContent = "engine offline";
+      $("#inference-state").textContent = "blocked";
+      setNotice("local model is offline. run npm run vsr in Terminal and leave it running.", true);
+    }
   } else if (engine.status === "setup_required") {
     state.textContent = "setup required";
     detail.textContent = `${engine.engine} · weights missing`;
     command.textContent = "npm run setup:vsr";
+    if (!inferenceBusy) {
+      $("#record-action").textContent = "model missing";
+      setNotice("model files are missing. run npm run setup:vsr once.", true);
+    }
+  } else if (engine.status === "loading") {
+    state.textContent = "loading model";
+    detail.textContent = `${engine.engine} · ${engine.device} · first read`;
+    command.textContent = "localhost:8787";
   } else {
     state.textContent = engine.model_loaded ? "ready" : "ready / cold";
     detail.textContent = `${engine.engine} · ${engine.device} · ${engine.model_loaded ? "loaded" : "loads on first read"}`;
     command.textContent = "localhost:8787";
+    if (!inferenceBusy && recorder?.state !== "recording") {
+      $("#record-action").textContent = "start reading";
+      if (!lastResult) {
+        setNotice(decodeMode === "demo"
+          ? "enable the camera, then mouth one demo phrase exactly."
+          : "enable the camera, then mouth a sentence at a natural pace.");
+        $("#inference-state").textContent = "idle";
+      }
+    }
   }
   updateRecordAvailability();
 }
 
 $("#enable-camera").addEventListener("click", () => void enableCamera());
 $("#record-button").addEventListener("click", toggleRecording);
+document.querySelectorAll<HTMLButtonElement>("[data-mode]").forEach((button) => {
+  button.addEventListener("click", () => {
+    decodeMode = button.dataset.mode === "open" ? "open" : "demo";
+    renderMode();
+  });
+});
 window.addEventListener("resize", resizeOverlay);
 window.addEventListener("keydown", (event) => {
   if (event.target instanceof HTMLInputElement) return;
@@ -443,5 +561,6 @@ window.addEventListener("keydown", (event) => {
 });
 
 renderLoop();
+renderMode();
 void pollEngine();
 window.setInterval(() => void pollEngine(), 4000);
