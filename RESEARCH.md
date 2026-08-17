@@ -36,7 +36,7 @@ Research cut: **17 August 2026**. The aim was not to collect every lip-reading p
 
 ### Browser tracking
 
-Google's **MediaPipe Face Landmarker** exposes dense face landmarks in real time on the web. It is excellent for a transparent, lightweight motion representation and neon overlays. Landmarks discard useful texture, tongue and tooth information, so they are a demo-friendly front end—not the accuracy ceiling.
+Google's **MediaPipe Face Landmarker** exposes dense face landmarks in real time on the web. It is excellent for transparent live tracking and capture checks. Landmarks discard useful texture, tongue and tooth information, so they are a demo-friendly front end—not the accuracy ceiling.
 
 - [MediaPipe Face Landmarker documentation](https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker/web_js)
 
@@ -63,7 +63,7 @@ Sub-word visual attention work explicitly identifies `pa / ba / ma` ambiguity an
 | Lip-pixel pretrained encoder | tens to hundreds of MB | commands | yes | good | medium |
 | Camera plus EMG | hardware-dependent | eventually | yes | medium | very high |
 
-The landmark classifier wins the first demo because it can be understood, trained and filmed in minutes. It is not the final architecture. The research-supported upgrade is a pretrained lip-pixel encoder with a small personalised adapter, followed by phoneme/sub-word lattice decoding and a separately weighted language prior.
+The original landmark classifier won the first prototype because it could be understood and trained in minutes. It also collapsed onto one label with tiny personal datasets. This version therefore takes the heavier but more credible Auto-AVSR/Chaplin route: pretrained lip pixels, open vocabulary, local beam decoding, and visible alternatives. The next serious gain is a small personalised adapter, not another from-scratch classifier.
 
 ## Gaps worth attacking
 

@@ -1,53 +1,39 @@
-# Launch recipe
+# launch recipe
 
-## The 25-second clip
+## the 20-second clip
 
-**0–3 seconds — hook**
+**0–3 seconds**
 
-Screen recording on the neon mouth overlay. Caption:
+Black screen. `unsaid` opens. Caption:
 
-> I built voice typing without the voice.
+> voice typing. minus the voice.
 
-**3–10 seconds — proof**
+**3–8 seconds**
 
-Mouth `bat` silently. Show `pat / bat / mat` all remain in the candidate lattice. No music needed; the absence of speech is the point.
+Enable the camera. The white mouth contour locks; real FPS, light, mouth size, and camera resolution appear. Keep the room silent.
 
-**10–17 seconds — reveal**
+**8–14 seconds**
 
-Click through:
+Mouth one short, obvious sentence. Stop. Let the local model return the transcript and its alternatives.
 
-- `The baseball player swung the ___` → **bat**
-- `Leave your shoes on the ___` → **mat**
-- `Gently ___ the dog` → **pat**
+**14–17 seconds**
 
-Keep the visual score fixed while the pink context score moves. That is the entire idea made legible.
+Mouth a deliberately ambiguous phrase. Show two credible beam candidates. Do not hide the miss if it misses. Failure is the plot.
 
-**17–22 seconds — honesty**
+**17–20 seconds**
 
-Caption:
-
-> It isn't reading my mind. It is reading probabilities.
-
-**22–25 seconds — participation**
-
-> I built this. Your job is to break it. My job is to fix it.
+> no mic. no upload. just pixels trying their best.
 >
-> github.com/madebylukas/shh-type
+> github.com/madebylukas/unsaid
 
-## Shot discipline
+## shot discipline
 
-- Record the screen and a small side angle of your face simultaneously.
-- Do not speak during the demo. Let viewers argue whether the clip is muted.
-- Keep candidate bars large enough for phone viewing.
-- Use captions; many viewers will watch silently, pleasingly enough.
-- Show one failure or uncertainty. Perfect demos smell manufactured.
+- screen-record at 1440p; crop for vertical afterward;
+- leave the audio track intact so silence is verifiable;
+- show the macOS microphone indicator is absent;
+- keep one model error in the cut;
+- never imply thought-reading, 99% accuracy, or production accessibility.
 
-## What to ask testers for
+## ask
 
-- Their hardest three-word confusion set
-- Browser and Mac model
-- Lighting and pose
-- Whether the right answer appeared in top 3
-- A screen recording when it fails
-
-Do not ask “thoughts?” Ask them to make it choose the wrong word.
+Do not ask for “feedback.” Ask people to post the shortest sentence that breaks it, plus their Mac model, camera resolution, light score, and whether the correct reading appeared in the top five.

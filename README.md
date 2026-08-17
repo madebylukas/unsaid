@@ -1,126 +1,107 @@
-# SHH//TYPE
+# unsaid
 
-> Say it. Don't.
+> type without speaking.
 
-![SHH//TYPE interface](docs/hero.png)
+![unsaid interface](docs/hero.png)
 
-SHH//TYPE is a webcam-only silent-word experiment. It tracks the mouth, trains a small temporal neural network on **your** examples, preserves multiple candidate predictions, and lets sentence context rerank them in public.
+`unsaid` is a local, webcam-only visual speech demo for macOS. It records a short silent clip, runs an open-vocabulary Auto-AVSR model locally, and exposes several beam-search hypotheses instead of laundering uncertainty into one suspiciously confident sentence.
 
-It is built to demonstrate the interesting part of visual speech recognition: uncertainty. It is not an open-vocabulary transcription system wearing a fashionable interface and a dishonest moustache.
+No microphone. No cloud inference. No three-word training ritual.
 
-## What the demo does
+## What changed
 
-- Runs locally in a browser on a Mac; no microphone or backend.
-- Tracks 20 lip landmarks at interactive frame rates with MediaPipe.
-- Normalises translation, scale and in-plane rotation.
-- Adds temporal velocity features and resamples every take to 32 frames.
-- Trains a TensorFlow.js Conv1D classifier in the browser.
-- Stores processed training sequences and model weights in browser storage.
-- Shows visual, contextual and fused candidate scores separately.
-- Lets the human override the winner instead of hiding uncertainty.
+The first prototype trained a tiny landmark classifier on words such as `pat`, `bat`, and `mat`. It was visually fun and statistically useless: with little data, it could collapse onto one class. This version replaces that toy model with a pretrained visual-speech system and keeps the browser responsible for the things it does well:
 
-## Run it on macOS
+- live face and mouth tracking with MediaPipe;
+- measured capture quality from frame rate, light, face angle, and mouth size;
+- video-only recording;
+- a legible transcript and N-best candidate list.
 
-Requirements:
+The Python side owns mouth-crop extraction, the visual transformer, and beam search.
 
-- Node.js 20 or newer
-- Chrome or Safari with webcam permission
-- Apple Silicon or Intel Mac; Apple Silicon is substantially happier
+## Run on a Mac
+
+Requirements: an Apple Silicon Mac, Node 20+, Python 3.12 via [`uv`](https://docs.astral.sh/uv/), and roughly 3 GB free for dependencies and model files.
 
 ```bash
-git clone https://github.com/madebylukas/shh-type.git
-cd shh-type
+git clone https://github.com/madebylukas/unsaid.git
+cd unsaid
 npm install
+uv python install cpython-3.12-macos-aarch64
+npm run setup:vsr
+```
+
+Then use two terminals:
+
+```bash
+npm run vsr
+```
+
+```bash
 npm run dev
 ```
 
-Open [http://127.0.0.1:5173](http://127.0.0.1:5173). `npm install` copies the MediaPipe WebAssembly runtime and downloads Google's Face Landmarker model into ignored local folders. After installation, the demo can run without a network connection.
+Open [http://127.0.0.1:5173](http://127.0.0.1:5173), enable the camera, mouth a short phrase, and stop. The first read is slower because the model loads lazily.
 
-## Get a convincing result
+CPU is the reliable default because ESPnet's legacy beam search still mixes CPU tensors into MPS decoding. You can experiment with MPS, but it is not yet the honest default:
 
-1. Enable the webcam and move close enough for **QUALITY / CLEAN** or **FAIR**.
-2. Record four takes each of `pat`, `bat`, and `mat`.
-3. Begin neutral, mouth the word once, and return to neutral during each 1.9-second capture.
-4. Train the local model.
-5. Open **02 / DECODE**, mouth one word, and change the context presets.
-
-`pat / bat / mat` are deliberately difficult. Their initial consonants are visually similar, so the candidate lattice should retain uncertainty while context changes the final ordering.
-
-The model is personal. Another person's mouth is distribution shift with teeth.
+```bash
+UNSAID_DEVICE=mps npm run vsr
+```
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    A["Webcam frames"] --> B["MediaPipe face mesh"]
-    B --> C["20 mouth landmarks"]
-    C --> D["Pose and scale normalization"]
-    D --> E["32-frame shape plus velocity tensor"]
-    E --> F["Conv1D personal classifier"]
-    F --> G["Visual probability lattice"]
-    H["Sentence context"] --> I["Local lexical prior"]
-    G --> J["Log-linear probability fusion"]
-    I --> J
-    J --> K["Ranked candidates plus human veto"]
+    A["webcam / video only"] --> B["live capture checks"]
+    A --> C["short WebM clip"]
+    C --> D["local face tracking + mouth crops"]
+    D --> E["Auto-AVSR visual encoder"]
+    E --> F["CTC / attention beam search"]
+    G["local language model"] --> F
+    F --> H["transcript + N-best candidates"]
 ```
 
-The browser model is intentionally tiny:
+The browser talks only to `127.0.0.1:8787`. Clips are written to a temporary local file for inference and deleted immediately afterward.
 
-```text
-32 frames × 92 features
-→ Conv1D(24, kernel 5)
-→ batch normalisation + max pooling
-→ Conv1D(48, kernel 3)
-→ global average pooling
-→ dense(64) + dropout
-→ softmax over the user's words
-```
+## Honest limits
 
-The context decoder computes a normalised prior and combines it with visual probabilities geometrically:
+Visual speech is underdetermined. `p`, `b`, and `m` can look the same because voicing and nasal airflow are not visible. A language model can rerank plausible readings; it cannot recover photons the camera never received.
 
-```text
-P(word | video, context)
-  ∝ P(word | video)^(1 - λ) × P(word | context)^λ
-```
+This is a demo, not accessibility software and not a 99%-accurate Whisper replacement. The upstream checkpoint reports roughly 19% word error on the controlled LRS3 benchmark. Real webcams, unseen faces, bad light, facial hair, and casual mouthing are harder. The useful questions are whether the intended words survive in the top candidates, how often the system abstains, and how quickly personal corrections can improve it.
 
-This is the useful version of “let the language model choose what makes sense”: keep the visual evidence alive, tune `λ`, and never let fluent text silently erase what the camera observed.
-
-## Honest scope
-
-This release is a **personalised closed-vocabulary classifier**, not continuous lip-to-text. It proves four product ideas quickly:
-
-1. A commodity webcam can create a delightful silent input loop.
-2. Personal calibration is valuable because mouths and speaking styles vary.
-3. Ambiguity should be an inspectable lattice, not a single fake certainty.
-4. Context can resolve visually similar candidates when it is fused carefully.
-
-For open-vocabulary sentences, swap the classifier for an Auto-AVSR/VALLR-style visual encoder and phoneme decoder. That brings a large model, much more data, slower Mac inference, and error rates that remain far above audio transcription. See [RESEARCH.md](RESEARCH.md) and [IDEATION.md](IDEATION.md).
+Read [RESEARCH.md](RESEARCH.md) for the evidence and [IDEATION.md](IDEATION.md) for the accuracy roadmap.
 
 ## Verification
 
 ```bash
 npm test
 npm run build
+python3 -m py_compile backend/server.py
 ```
 
-Current checks cover feature invariance, temporal resampling, uncertainty, and contextual reranking. The interface has also been checked at desktop and 390-pixel mobile widths; the live tracker reached 30 FPS on the development Mac.
+End-to-end browser validation on an M1 Pro used the built-in 1280×720 camera at 30 FPS. A 4.8-second cold clip decoded in 13.7 seconds; a 4.5-second warm clip decoded in 8.7 seconds. Both returned five distinct candidates. Treat those as one-machine measurements, not marketing scripture.
 
 ## Privacy
 
-- `getUserMedia` requests video only: `audio: false`.
-- Raw frames are not uploaded or saved.
-- Only normalised numerical sequences and model weights persist in browser storage.
-- **Reset** removes both.
-- No telemetry, accounts or third-party analytics exist.
+- The browser requests `audio: false`.
+- Inference stays on the Mac.
+- Temporary clips are deleted after each request.
+- No accounts, analytics, or third-party API calls exist at runtime.
 
-Inspect the code. Privacy claims should survive `rg`, not merely a gradient landing page.
+Privacy claims should survive `rg`, not merely a tasteful black interface.
 
-## Research and next steps
+## Upstream work
 
-- [Research review](RESEARCH.md)
-- [Accuracy and product ideation](IDEATION.md)
-- [Launch recipe](LAUNCH.md)
+The local inference bridge adapts [Chaplin](https://github.com/amanvirparhar/chaplin) (MIT), which builds on [Auto-AVSR](https://github.com/mpc001/auto_avsr) (Apache-2.0). Model and language-model files retain their upstream terms. See [backend/NOTICE.md](backend/NOTICE.md).
+
+## Notes
+
+- [research review](RESEARCH.md)
+- [accuracy roadmap](IDEATION.md)
+- [visual system](DESIGN.md)
+- [launch recipe](LAUNCH.md)
 
 ## License
 
-[MIT](LICENSE). MediaPipe and TensorFlow.js retain their respective licenses. The Face Landmarker model is downloaded from Google's official model bucket during installation and is not committed here.
+[MIT](LICENSE), excluding third-party models and dependencies under their own terms.
