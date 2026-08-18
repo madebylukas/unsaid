@@ -89,11 +89,12 @@ Use three interaction states:
 
 ### V0 — this repository
 
-- Personal word classifier from mouth landmarks
-- Fixed-length captures
-- Curated local context prior
-- Visible probability fusion
-- Goal: prove the interaction and get real confusion data
+- Open-vocabulary Auto-AVSR visual checkpoint
+- Local mouth-crop inference from short webcam clips
+- N-best beam candidates with a separately trained local language model
+- Six-phrase constrained demo decoder with explicit match scores and abstention
+- Measured capture quality and explicit failure states
+- Goal: test whether intended words survive in the lattice on ordinary Mac webcams
 
 ### V1 — serious personalised commands
 
@@ -112,10 +113,10 @@ Use three interaction states:
 - Confidence-gated insertion
 - Goal: short messages in a defined domain with a competitive zero-edit rate
 
-### V3 — open vocabulary
+### V3 — useful open vocabulary
 
 - Auto-AVSR/VALLR-class visual encoder and decoder
-- Core ML or MLX conversion for Apple Silicon
+- Core ML or MLX conversion for fast, device-consistent Apple Silicon inference
 - Distillation, quantisation and streaming inference
 - Optional EMG/contact sensing for the information that vision cannot recover
 - Goal: honest WER and coverage benchmarks across unseen speakers, lighting and poses

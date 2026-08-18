@@ -7,4 +7,11 @@ public/models/*
 public/mediapipe/*
 !public/mediapipe/.gitkeep
 work/
+.cache/
 *.log
+__pycache__/
+*.pyc
+graphify-out/
+.vercel/
+.vercel
+.env*
