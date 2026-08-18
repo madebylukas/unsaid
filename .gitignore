@@ -11,3 +11,7 @@ work/
 *.log
 __pycache__/
 *.pyc
+graphify-out/
+.vercel/
+.vercel
+.env*

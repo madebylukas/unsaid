@@ -1,13 +1,26 @@
 import type { Candidate } from "./api";
 
-export const DEMO_PHRASES = [
-  "it's pretty cool you know",
-  "hello how are you",
-  "thank you very much",
-  "i don't know",
-  "open github",
-  "send the message",
+export const DEMO_DECKS = [
+  [
+    "it's pretty cool you know",
+    "hello how are you",
+    "thank you very much",
+    "i don't know",
+    "see you tomorrow",
+    "send the message",
+    "lukas is really handsome",
+  ],
+  [
+    "please help me",
+    "this is not a drill",
+    "you look suspicious",
+    "we have a problem",
+    "meet me outside",
+    "the wifi is down",
+  ],
 ] as const;
+
+export const DEMO_PHRASES = DEMO_DECKS.flat();
 
 export interface DemoResolution {
   committed: boolean;
@@ -71,8 +84,8 @@ function phraseSimilarity(hypothesis: string, phrase: string): number {
   return best;
 }
 
-export function resolveDemo(candidates: Candidate[]): DemoResolution {
-  const ranked = DEMO_PHRASES.map((phrase) => {
+export function resolveDemo(candidates: Candidate[], phrases: readonly string[] = DEMO_PHRASES): DemoResolution {
+  const ranked = phrases.map((phrase) => {
     let bestMatch = 0;
     let sourceProbability = 0;
     for (const candidate of candidates) {

@@ -1,0 +1,10 @@
+.cache
+.git
+.vercel
+dist
+graphify-out
+node_modules
+work
+__pycache__
+*.pyc
+*.log

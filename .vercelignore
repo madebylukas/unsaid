@@ -1,0 +1,8 @@
+dist/
+graphify-out/
+node_modules/
+.cache/
+work/
+__pycache__/
+*.pyc
+*.log

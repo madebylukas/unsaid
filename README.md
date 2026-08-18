@@ -4,9 +4,9 @@
 
 ![unsaid interface](docs/hero.png)
 
-`unsaid` is a local, webcam-only visual speech demo for macOS. It records a short silent clip, runs an open-vocabulary Auto-AVSR model locally, and exposes several beam-search hypotheses instead of laundering uncertainty into one suspiciously confident sentence.
+`unsaid` is a webcam-only visual speech demo. It records a short silent clip, runs an open-vocabulary Auto-AVSR model, and exposes several beam-search hypotheses instead of laundering uncertainty into one suspiciously confident sentence.
 
-No microphone. No cloud inference. No three-word training ritual.
+No microphone. No three-word training ritual. Local development keeps inference on the Mac; the public demo sends each silent clip to its inference server and deletes the temporary file immediately afterward.
 
 ## What changed
 
@@ -43,16 +43,23 @@ npm run dev
 
 Open [http://127.0.0.1:5173](http://127.0.0.1:5173), enable the camera, mouth a short phrase, and stop. The first read is slower because the model loads lazily.
 
-The interface starts in a constrained six-phrase demo mode:
+The interface starts with a constrained seven-phrase demo deck. A second six-line deck is available with `rotate set`; only the visible deck is decoded at once so the extra range does not dilute the match:
 
 - `it's pretty cool you know`
 - `hello how are you`
 - `thank you very much`
 - `i don't know`
-- `open github`
+- `see you tomorrow`
 - `send the message`
+- `lukas is really handsome`
+- `please help me`
+- `this is not a drill`
+- `you look suspicious`
+- `we have a problem`
+- `meet me outside`
+- `the wifi is down`
 
-Mouth one line exactly. The raw visual beam is matched against this set and commits only when its match and separation clear the threshold; otherwise it says `not confident`. Switch to `open` in the interface for unrestricted decoding.
+Mouth one visible line exactly. The raw visual beam is matched against the active deck and commits only when its match and separation clear the threshold; otherwise it says `not confident`. A committed phrase is highlighted directly in the deck. Switch to `open` in the interface for unrestricted decoding.
 
 CPU is the reliable default because ESPnet's legacy beam search still mixes CPU tensors into MPS decoding. You can experiment with MPS, but it is not yet the honest default:
 
@@ -73,7 +80,13 @@ flowchart LR
     F --> H["transcript + N-best candidates"]
 ```
 
-The browser talks only to `127.0.0.1:8787`. Clips are written to a temporary local file for inference and deleted immediately afterward.
+In local development, the browser talks only to `127.0.0.1:8787`. In production, the browser uses the same-origin `/api` route. Clips are written to a temporary file for inference and deleted immediately afterward.
+
+## Public deployment
+
+The production image is defined in `Dockerfile.vercel`. It builds the Vite interface on top of a pinned model image in this project's Vercel Container Registry, then serves both the site and API from one origin. The server listens on Vercel's assigned `PORT`.
+
+`Dockerfile.bootstrap` contains the full reproducible model build used to refresh that base image. Its checkpoints are converted into balanced state-dict shards: each stays inside VCR's per-layer limit and loads incrementally to keep inference below the Hobby plan's 2 GB memory ceiling. Normal code releases reuse the immutable base instead of downloading 1.2 GB again.
 
 ## Honest limits
 
@@ -96,7 +109,7 @@ End-to-end browser validation on an M1 Pro used the built-in 1280×720 camera at
 ## Privacy
 
 - The browser requests `audio: false`.
-- Inference stays on the Mac.
+- Local inference stays on the Mac; the public demo sends the silent clip only to its same-origin inference container.
 - Temporary clips are deleted after each request.
 - No accounts, analytics, or third-party API calls exist at runtime.
 

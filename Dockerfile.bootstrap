@@ -1,0 +1,66 @@
+# syntax=docker/dockerfile:1
+
+FROM node:22-bookworm-slim AS web
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY scripts/setup-assets.mjs ./scripts/setup-assets.mjs
+RUN npm ci
+COPY index.html tsconfig.json vite.config.ts ./
+COPY src ./src
+COPY public ./public
+RUN npm run build
+
+FROM node:22-bookworm-slim AS model-assets
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates git \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY scripts/setup-vsr.mjs ./scripts/setup-vsr.mjs
+RUN node scripts/setup-vsr.mjs \
+    && rm -rf /app/.cache/chaplin/.git
+
+FROM model-assets AS chaplin-code
+RUN rm \
+        /app/.cache/chaplin/benchmarks/LRS3/models/LRS3_V_WER19.1/model.pth \
+        /app/.cache/chaplin/benchmarks/LRS3/language_models/lm_en_subword/model.pth
+
+FROM python:3.12-slim-bookworm AS checkpoint-shards
+WORKDIR /app
+RUN pip install --no-cache-dir \
+        --index-url https://download.pytorch.org/whl/cpu \
+        torch==2.7.1
+COPY scripts/shard-state-dict.py ./scripts/shard-state-dict.py
+COPY --from=model-assets /app/.cache/chaplin/benchmarks/LRS3/models/LRS3_V_WER19.1/model.pth /input/model.pth
+COPY --from=model-assets /app/.cache/chaplin/benchmarks/LRS3/language_models/lm_en_subword/model.pth /input/lm.pth
+RUN python scripts/shard-state-dict.py /input/model.pth /output --prefix model-state --shards 8 \
+    && python scripts/shard-state-dict.py /input/lm.pth /output --prefix lm-state --shards 3
+
+FROM python:3.12-slim-bookworm
+ENV HOST=0.0.0.0 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UNSAID_DEVICE=cpu
+WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg libgl1 libglib2.0-0 libsm6 libxext6 \
+    && rm -rf /var/lib/apt/lists/*
+COPY backend/requirements-container.txt ./backend/requirements-container.txt
+RUN pip install --no-cache-dir \
+        --index-url https://download.pytorch.org/whl/cpu \
+        torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1
+RUN pip install --no-cache-dir -r backend/requirements-container.txt
+COPY backend ./backend
+COPY --from=web /app/dist ./dist
+COPY --from=chaplin-code /app/.cache/chaplin ./.cache/chaplin
+COPY --from=checkpoint-shards /output/model-state-000.pth ./.cache/model-parts/model-state-000.pth
+COPY --from=checkpoint-shards /output/model-state-001.pth ./.cache/model-parts/model-state-001.pth
+COPY --from=checkpoint-shards /output/model-state-002.pth ./.cache/model-parts/model-state-002.pth
+COPY --from=checkpoint-shards /output/model-state-003.pth ./.cache/model-parts/model-state-003.pth
+COPY --from=checkpoint-shards /output/model-state-004.pth ./.cache/model-parts/model-state-004.pth
+COPY --from=checkpoint-shards /output/model-state-005.pth ./.cache/model-parts/model-state-005.pth
+COPY --from=checkpoint-shards /output/model-state-006.pth ./.cache/model-parts/model-state-006.pth
+COPY --from=checkpoint-shards /output/model-state-007.pth ./.cache/model-parts/model-state-007.pth
+COPY --from=checkpoint-shards /output/lm-state-000.pth ./.cache/model-parts/lm-state-000.pth
+COPY --from=checkpoint-shards /output/lm-state-001.pth ./.cache/model-parts/lm-state-001.pth
+COPY --from=checkpoint-shards /output/lm-state-002.pth ./.cache/model-parts/lm-state-002.pth
+CMD ["python", "backend/server.py"]

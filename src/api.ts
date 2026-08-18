@@ -20,7 +20,7 @@ export interface EngineHealth {
   detail?: string;
 }
 
-const ENGINE_ORIGIN = "http://127.0.0.1:8787";
+const ENGINE_ORIGIN = import.meta.env.PROD ? "/api" : "http://127.0.0.1:8787";
 
 export async function getEngineHealth(): Promise<EngineHealth | null> {
   try {

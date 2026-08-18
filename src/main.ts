@@ -3,9 +3,12 @@ import type { NormalizedLandmark } from "@mediapipe/tasks-vision";
 import "./style.css";
 import { getEngineHealth, inferVideo } from "./api";
 import type { Candidate, EngineHealth, InferenceResult } from "./api";
-import { DEMO_PHRASES, resolveDemo } from "./demo";
+import { DEMO_DECKS, resolveDemo } from "./demo";
 import { MOUTH_CONTOURS } from "./features";
+import { mapCoverPoint, polygonArea } from "./geometry";
 import { computeQuality, formatResolution } from "./telemetry";
+
+const PUBLIC_DEMO = import.meta.env.PROD;
 
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) throw new Error("app root not found");
@@ -14,7 +17,7 @@ app.innerHTML = `
   <div class="app-shell">
     <header class="topbar">
       <a class="wordmark" href="#">unsaid</a>
-      <span class="descriptor">visual speech / local</span>
+      <span class="descriptor">visual speech / ${PUBLIC_DEMO ? "public demo" : "local"}</span>
       <a class="source" href="https://github.com/madebylukas/unsaid" target="_blank" rel="noreferrer">github ↗</a>
     </header>
 
@@ -40,7 +43,7 @@ app.innerHTML = `
             <dl>
               <div><dt>fps</dt><dd id="fps-value">—</dd></div>
               <div><dt>light</dt><dd id="light-value">—</dd></div>
-              <div><dt>mouth</dt><dd id="mouth-value">—</dd></div>
+              <div><dt>mouth area</dt><dd id="mouth-value">—</dd></div>
               <div><dt>quality</dt><dd id="quality-value">—</dd></div>
             </dl>
           </div>
@@ -53,25 +56,30 @@ app.innerHTML = `
           <span id="inference-state">idle</span>
         </div>
 
+        <div class="phrase-toolbar">
+          <span>available sentences / <b id="deck-number">01</b></span>
+          <button id="rotate-phrases">rotate set ↻</button>
+        </div>
+
+        <div class="phrase-bank" id="phrase-bank"></div>
+
         <div class="transcript-wrap">
           <p class="transcript" id="transcript">choose a phrase.</p>
-          <p class="notice" id="notice">start the local engine, then mouth one line from the demo set.</p>
+          <p class="notice" id="notice">${PUBLIC_DEMO
+            ? "enable the camera, then mouth one line from the demo set."
+            : "start the local engine, then mouth one line from the demo set."}</p>
         </div>
 
         <div class="result-meta" id="result-meta">
-          <span id="result-mode">demo / 6 phrases</span><span>no result yet</span>
+          <span id="result-mode">demo / ${DEMO_DECKS[0].length} phrases</span><span>no result yet</span>
         </div>
 
         <div class="mode-control">
           <span>decode mode</span>
           <div>
-            <button class="active" data-mode="demo">demo / 6</button>
+            <button class="active" data-mode="demo">demo</button>
             <button data-mode="open">open</button>
           </div>
-        </div>
-
-        <div class="phrase-bank" id="phrase-bank">
-          ${DEMO_PHRASES.map((phrase) => `<span>${phrase}</span>`).join("")}
         </div>
 
         <button class="record-button" id="record-button" disabled>
@@ -91,7 +99,7 @@ app.innerHTML = `
           <div class="engine-row">
             <div>
               <strong id="engine-name">auto-avsr</strong>
-              <span id="engine-detail">looking for localhost:8787</span>
+              <span id="engine-detail">${PUBLIC_DEMO ? "checking the visual model" : "looking for localhost:8787"}</span>
             </div>
             <code id="engine-command">npm run vsr</code>
           </div>
@@ -101,7 +109,7 @@ app.innerHTML = `
 
     <footer class="footer">
       <span>webcam → mouth crop → visual transformer → beam search</span>
-      <span>no microphone · no upload · esc cancels</span>
+      <span>no microphone · clips deleted after reading · esc cancels</span>
     </footer>
   </div>
 `;
@@ -141,9 +149,11 @@ let fpsStarted = performance.now();
 let measuredFps = 0;
 let luminance = 0;
 let mouthWidthPx = 0;
+let mouthAreaPx = 0;
 let rollDegrees = 0;
 let faceVisible = false;
 let lastLightSample = 0;
+let activeDeckIndex = 0;
 
 function setNotice(message: string, isError = false): void {
   const notice = $("#notice");
@@ -160,22 +170,37 @@ function escapeHtml(text: string): string {
   })[character] ?? character);
 }
 
+function activePhrases(): readonly string[] {
+  return DEMO_DECKS[activeDeckIndex];
+}
+
+function renderPhraseBank(selectedPhrase = ""): void {
+  $("#deck-number").textContent = String(activeDeckIndex + 1).padStart(2, "0");
+  $("#phrase-bank").innerHTML = activePhrases().map((phrase, index) => `
+    <span class="${phrase === selectedPhrase ? "selected" : ""}">
+      <b>${String(index + 1).padStart(2, "0")}</b>${escapeHtml(phrase)}
+    </span>
+  `).join("");
+}
+
 function renderMode(): void {
   document.querySelectorAll<HTMLButtonElement>("[data-mode]").forEach((button) => {
     button.classList.toggle("active", button.dataset.mode === decodeMode);
   });
   $("#phrase-bank").hidden = decodeMode === "open";
+  $(".phrase-toolbar").hidden = decodeMode === "open";
   $("#candidate-label").textContent = decodeMode === "demo" ? "demo matches" : "visual alternatives";
   $("#score-label").textContent = decodeMode === "demo" ? "match" : "beam share";
-  $("#result-mode").textContent = decodeMode === "demo" ? "demo / 6 phrases" : "open vocabulary";
+  $("#result-mode").textContent = decodeMode === "demo" ? `demo / ${activePhrases().length} phrases` : "open vocabulary";
 
   if (lastResult) {
     renderInferenceResult(lastResult, lastDuration);
     return;
   }
+  renderPhraseBank();
   $("#transcript").textContent = decodeMode === "demo" ? "choose a phrase." : "mouth a sentence.";
   $("#candidates").innerHTML = `<p>${decodeMode === "demo"
-    ? "the model may commit only to one of the six phrases above."
+    ? "the model may commit only to one of the phrases above."
     : "the model keeps several readings when the image is ambiguous."}</p>`;
   if (engine) {
     setNotice(decodeMode === "demo"
@@ -196,10 +221,15 @@ function resizeOverlay(): void {
 
 function point(landmarks: NormalizedLandmark[], index: number): { x: number; y: number } {
   const rect = video.getBoundingClientRect();
-  return {
-    x: (1 - landmarks[index].x) * rect.width,
-    y: landmarks[index].y * rect.height,
-  };
+  return mapCoverPoint(
+    landmarks[index].x,
+    landmarks[index].y,
+    rect.width,
+    rect.height,
+    video.videoWidth,
+    video.videoHeight,
+    true,
+  );
 }
 
 function drawMouth(landmarks: NormalizedLandmark[] | null): void {
@@ -247,7 +277,7 @@ function renderTelemetry(): void {
   const quality = computeQuality({ mouthWidthPx, fps: measuredFps, luminance, rollDegrees, faceVisible });
   $("#fps-value").textContent = measuredFps ? String(measuredFps) : "—";
   $("#light-value").textContent = luminance ? `${luminance}%` : "—";
-  $("#mouth-value").textContent = mouthWidthPx ? `${Math.round(mouthWidthPx)} px` : "—";
+  $("#mouth-value").textContent = mouthAreaPx ? `${(mouthAreaPx / 1000).toFixed(1)}k px²` : "—";
   $("#quality-value").textContent = faceVisible ? `${quality.score} / ${quality.label}` : quality.label;
   $("#quality-value").className = quality.score >= 76 ? "quality-good" : quality.score >= 50 ? "quality-fair" : "quality-poor";
   $("#camera-state").textContent = faceVisible ? "face locked" : "searching for face";
@@ -262,12 +292,17 @@ function renderLoop(): void {
     faceVisible = Boolean(landmarks);
     if (landmarks) {
       mouthWidthPx = Math.abs(landmarks[61].x - landmarks[291].x) * video.videoWidth;
+      mouthAreaPx = polygonArea(MOUTH_CONTOURS[0].map((index) => ({
+        x: landmarks[index].x * video.videoWidth,
+        y: landmarks[index].y * video.videoHeight,
+      })));
       rollDegrees = Math.atan2(
         landmarks[291].y - landmarks[61].y,
         landmarks[291].x - landmarks[61].x,
       ) * 180 / Math.PI;
     } else {
       mouthWidthPx = 0;
+      mouthAreaPx = 0;
       rollDegrees = 0;
     }
     drawMouth(landmarks);
@@ -358,6 +393,7 @@ function updateRecordAvailability(): void {
   document.querySelectorAll<HTMLButtonElement>("[data-mode]").forEach((modeButton) => {
     modeButton.disabled = inferenceBusy || recording;
   });
+  ($("#rotate-phrases") as HTMLButtonElement).disabled = inferenceBusy || recording;
 }
 
 function renderClock(): void {
@@ -375,7 +411,7 @@ function renderClock(): void {
 function startRecording(): void {
   if (!stream || recorder?.state === "recording") return;
   const mimeType = supportedMimeType();
-  recorder = new MediaRecorder(stream, mimeType ? { mimeType, videoBitsPerSecond: 2_500_000 } : undefined);
+  recorder = new MediaRecorder(stream, mimeType ? { mimeType, videoBitsPerSecond: 2_000_000 } : undefined);
   recordedChunks = [];
   discardRecording = false;
   recorder.addEventListener("dataavailable", (event) => {
@@ -389,6 +425,7 @@ function startRecording(): void {
   $("#record-action").textContent = "stop + read";
   $("#inference-state").textContent = "recording";
   $("#transcript").textContent = "…";
+  renderPhraseBank();
   setNotice(decodeMode === "demo" ? "mouth one demo phrase exactly, then stop." : "mouth a complete phrase, then stop.");
   renderClock();
 }
@@ -420,14 +457,17 @@ function renderCandidates(candidates: Candidate[]): void {
 
 function renderInferenceResult(result: InferenceResult, duration: number): void {
   if (decodeMode === "demo") {
-    const resolution = resolveDemo(result.candidates);
+    const resolution = resolveDemo(result.candidates, activePhrases());
     renderCandidates(resolution.candidates);
     if (resolution.committed) {
-      $("#transcript").textContent = resolution.candidates[0].text;
+      const winningPhrase = resolution.candidates[0].text;
+      $("#transcript").textContent = winningPhrase;
+      renderPhraseBank(winningPhrase);
       $("#inference-state").textContent = `${Math.round(resolution.confidence * 100)}% match`;
       setNotice(`raw visual reading: “${result.transcript}”. constrained to the demo set.`);
     } else {
       $("#transcript").textContent = "not confident.";
+      renderPhraseBank();
       $("#inference-state").textContent = "abstained";
       setNotice(`raw visual reading: “${result.transcript}”. try one demo phrase more slowly.`, true);
     }
@@ -437,7 +477,7 @@ function renderInferenceResult(result: InferenceResult, duration: number): void 
     renderCandidates(result.candidates);
     setNotice("visual-only result. alternatives remain visible below.");
   }
-  $("#result-meta").innerHTML = `<span id="result-mode">${decodeMode === "demo" ? "demo / 6 phrases" : "open vocabulary"}</span><span>${duration.toFixed(1)} s clip · ${(result.latency_ms / 1000).toFixed(1)} s read · ${escapeHtml(result.device)}</span>`;
+  $("#result-meta").innerHTML = `<span id="result-mode">${decodeMode === "demo" ? `demo / ${activePhrases().length} phrases` : "open vocabulary"}</span><span>${duration.toFixed(1)} s clip · ${(result.latency_ms / 1000).toFixed(1)} s read · ${escapeHtml(result.device)}</span>`;
 }
 
 async function submitRecording(): Promise<void> {
@@ -448,18 +488,18 @@ async function submitRecording(): Promise<void> {
   }
   const duration = (performance.now() - recordingStarted) / 1000;
   $("#record-time").hidden = true;
-  if (duration < 1.2) {
+  const blob = new Blob(recordedChunks, { type: recorder?.mimeType || "video/webm" });
+  if (!blob.size) {
     $("#inference-state").textContent = "idle";
-    $("#transcript").textContent = "too short.";
-    setNotice("record at least a full word or short sentence.", true);
+    $("#transcript").textContent = "no video.";
+    setNotice("the camera produced no video frames. try recording again.", true);
     return;
   }
-  const blob = new Blob(recordedChunks, { type: recorder?.mimeType || "video/webm" });
   inferenceBusy = true;
   updateRecordAvailability();
   const inferenceStarted = performance.now();
   $("#inference-state").textContent = "reading 0s";
-  setNotice("reading locally. the first clip can take 10–20 seconds.");
+  setNotice(`${PUBLIC_DEMO ? "reading on the demo server" : "reading locally"}. the first clip can take 10–20 seconds.`);
   inferenceStatusTimer = window.setInterval(() => {
     const seconds = Math.floor((performance.now() - inferenceStarted) / 1000);
     $("#inference-state").textContent = `reading ${seconds}s`;
@@ -498,12 +538,14 @@ async function pollEngine(): Promise<void> {
   engine = nextEngine;
   if (!engine) {
     state.textContent = "offline";
-    detail.textContent = "localhost:8787 is not running";
-    command.textContent = "npm run vsr";
+    detail.textContent = PUBLIC_DEMO ? "the demo model is unavailable" : "localhost:8787 is not running";
+    command.textContent = PUBLIC_DEMO ? "try again shortly" : "npm run vsr";
     if (!inferenceBusy) {
       $("#record-action").textContent = "engine offline";
       $("#inference-state").textContent = "blocked";
-      setNotice("local model is offline. run npm run vsr in Terminal and leave it running.", true);
+      setNotice(PUBLIC_DEMO
+        ? "the demo model is waking up or unavailable. try again shortly."
+        : "local model is offline. run npm run vsr in Terminal and leave it running.", true);
     }
   } else if (engine.status === "setup_required") {
     state.textContent = "setup required";
@@ -516,11 +558,11 @@ async function pollEngine(): Promise<void> {
   } else if (engine.status === "loading") {
     state.textContent = "loading model";
     detail.textContent = `${engine.engine} · ${engine.device} · first read`;
-    command.textContent = "localhost:8787";
+    command.textContent = PUBLIC_DEMO ? "secure demo server" : "localhost:8787";
   } else {
     state.textContent = engine.model_loaded ? "ready" : "ready / cold";
     detail.textContent = `${engine.engine} · ${engine.device} · ${engine.model_loaded ? "loaded" : "loads on first read"}`;
-    command.textContent = "localhost:8787";
+    command.textContent = PUBLIC_DEMO ? "secure demo server" : "localhost:8787";
     if (!inferenceBusy && recorder?.state !== "recording") {
       $("#record-action").textContent = "start reading";
       if (!lastResult) {
@@ -541,6 +583,16 @@ document.querySelectorAll<HTMLButtonElement>("[data-mode]").forEach((button) => 
     decodeMode = button.dataset.mode === "open" ? "open" : "demo";
     renderMode();
   });
+});
+$("#rotate-phrases").addEventListener("click", () => {
+  activeDeckIndex = (activeDeckIndex + 1) % DEMO_DECKS.length;
+  lastResult = null;
+  renderPhraseBank();
+  $("#transcript").textContent = "choose a phrase.";
+  $("#inference-state").textContent = "idle";
+  $("#result-meta").innerHTML = `<span id="result-mode">demo / ${activePhrases().length} phrases</span><span>no result yet</span>`;
+  $("#candidates").innerHTML = "<p>the model may commit only to one of the phrases above.</p>";
+  setNotice("mouth one demo phrase exactly, then stop.");
 });
 window.addEventListener("resize", resizeOverlay);
 window.addEventListener("keydown", (event) => {

@@ -28,4 +28,21 @@ describe("constrained demo decoder", () => {
     ]);
     expect(result.committed).toBe(false);
   });
+
+  it("only commits within the active rotating deck", () => {
+    const result = resolveDemo(
+      [{ text: "please help me", probability: 0.94, score: -1 }],
+      ["please help me", "the wifi is down"],
+    );
+    expect(result.committed).toBe(true);
+    expect(result.candidates[0].text).toBe("please help me");
+  });
+
+  it("includes the objectively correct Lukas phrase in the first deck", () => {
+    const result = resolveDemo(
+      [{ text: "lukas is really handsome", probability: 0.96, score: -1 }],
+    );
+    expect(result.committed).toBe(true);
+    expect(result.candidates[0].text).toBe("lukas is really handsome");
+  });
 });
